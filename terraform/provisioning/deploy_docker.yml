@@ -1,0 +1,53 @@
+---
+- name: Setup Docker
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  vars:
+    db_endpoint_full: "{{ lookup('env', 'DB_ENDPOINT') }}"
+    db_endpoint: "{{ db_endpoint_full.split(':')[0] }}"
+    db_name: "{{ lookup('env', 'DB_NAME') }}"
+    db_user: "{{ lookup('env', 'DB_USER') }}"
+    db_password: "{{ lookup('env', 'DB_PASS') }}"
+
+  tasks:
+    - name: Update all packages
+      apt:
+        update_cache: yes
+        upgrade: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - docker.io
+          - python3-pip
+          - docker-compose
+        state: present
+
+    - name: Start and enable Docker
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add ubuntu user to the docker group
+      command: usermod -aG docker ubuntu
+      changed_when: false
+
+    - name: Ensure Docker SDK for Python is installed
+      pip:
+        name: docker
+
+    - name: Run the Docker container
+      community.docker.docker_container:
+        name: flask-mysql-app
+        image: jjorozco20/flask-mysql-app:1.0.0
+        state: started
+        published_ports:
+          - "5001:5001"
+        env:
+          MYSQL_HOST: "{{ db_endpoint }}"
+          MYSQL_DB: "{{ db_name }}"
+          MYSQL_USER: "{{ db_user }}"
+          MYSQL_PASSWORD: "{{ db_password }}"

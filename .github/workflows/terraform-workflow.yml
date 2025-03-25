@@ -1,0 +1,88 @@
+---
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  terraform_ci:
+    name: Terraform Validate & Plan
+    runs-on: self-hosted
+    environment: devops-poc  # Uses the environment where the secret is stored
+    outputs:
+      plan_file: terraform-plan.json
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Google Cloud Credentials
+        shell: pwsh
+        run: |
+          $gcloudPath = "$env:USERPROFILE\gcp-credentials.json"
+          "${{ secrets.GCP_CREDENTIALS }}" | Out-File -FilePath $gcloudPath -Encoding utf8
+          $env:GOOGLE_APPLICATION_CREDENTIALS = $gcloudPath
+          Add-Content -Path $env:GITHUB_ENV -Value "GOOGLE_APPLICATION_CREDENTIALS=$gcloudPath"
+
+      - name: Terraform Init
+        shell: pwsh
+        run: terraform init
+
+      - name: Copy poc.auto.tfvars if available
+        shell: pwsh
+        run: |
+          $pocFile = "$env:USERPROFILE\poc.auto.tfvars"
+          if (Test-Path $pocFile) {
+            Copy-Item $pocFile .
+          }
+
+      - name: Terraform Validate
+        shell: pwsh
+        run: terraform validate
+
+      - name: Terraform Plan
+        shell: pwsh
+        run: terraform plan -var-file=poc.auto.tfvars -out=tfplan
+
+      - name: Save Plan Output
+        shell: pwsh
+        run: terraform show -json tfplan | Out-File terraform-plan.json -Encoding utf8
+
+      - name: Upload Plan File
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan
+          path: terraform-plan.json
+
+  manual_review:
+    name: Manual Review
+    runs-on: ubuntu-latest
+    needs: terraform_ci
+    environment: devops-poc  # Ensures secrets are accessible
+    steps:
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-plan
+
+      - name: Show Plan
+        shell: pwsh
+        run: Get-Content terraform-plan.json
+
+      - name: Manual Approval
+        uses: hmarr/auto-approve-action@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  success_job:
+    name: Success Notification
+    runs-on: ubuntu-latest
+    needs: manual_review
+    steps:
+      - name: Notify Success
+        shell: pwsh
+        run: Write-Output "Terraform plan was approved and ready to apply!"
